@@ -1,0 +1,230 @@
+---
+title: Bidirectional Migration Guide - Jest and Bun Test Runner
+description: Complete guide for migrating between Jest and Bun's test runner in both directions
+sidebarTitle: Jest and Bun Migration
+mode: center
+---
+
+# Jest and Bun Test Runner: Bidirectional Migration Guide
+
+A comprehensive guide for migrating test suites between Jest and Bun's built-in test runner. Includes both forward migration (Jest → Bun) and reverse migration (Bun → Jest) for teams that need to switch back.
+
+---
+
+## Quick Comparison
+
+| Feature | Jest | Bun |
+|---------|------|-----|
+| **Speed** | Baseline | 10-100x faster |
+| **Configuration** | `jest.config.js` + multiple deps | Zero config, built-in |
+| **TypeScript** | Requires `ts-jest` or Babel | Native support |
+| **Mocking** | `jest.fn()`, `jest.mock()` | `mock()`, `jest.fn()` (alias) |
+| **Globals** | Injected by default | Opt-in via triple-slash directive |
+| **Isolation** | Strong (default) | Limited (single process) |
+| **DOM Testing** | `jsdom` environment | `happy-dom` (preload script) |
+
+---
+
+## Part 1: Jest → Bun (Forward Migration)
+
+### Step 1: Install Bun
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+````
+
+### Step 2: Run Tests (Zero Changes)
+
+Bun rewrites `@jest/globals` imports automatically:
+
+```sh
+# Before
+npx jest
+yarn test
+
+# After
+bun test
+```
+
+### Step 3: Update Imports (Optional)
+
+If you prefer explicit imports over magic:
+
+```ts title="test.ts"
+import { test, expect } from "@jest/globals"; // [!code --]
+import { test, expect } from "bun:test";      // [!code ++]
+```
+
+### Step 4: Enable TypeScript Globals (v1.2.19+)
+
+Add to **one file** in your project (e.g., `global.d.ts`):
+
+```ts title="global.d.ts"
+/// <reference types="bun-types/test-globals" />
+```
+
+This enables TypeScript support for global `describe`, `test`, `expect` without imports.
+
+### Step 5: Configuration Migration
+
+| Jest Config (`jest.config.js`) | Bun Equivalent (`bunfig.toml`)      |
+| ------------------------------ | ----------------------------------- |
+| `testEnvironment: "jsdom"`     | Preload script + happy-dom          |
+| `bail: 3`                      | `bun test --bail=3`                 |
+| `collectCoverage: true`        | `bun test --coverage`               |
+| `testTimeout: 10000`           | `bun test --timeout 10000`          |
+| `verbose: true`                | `logLevel = "debug"` in bunfig.toml |
+| `transform`                    | Not needed (native TS/JSX)          |
+| `watchman`                     | `bun test --watch`                  |
+
+**DOM Testing Setup:**
+
+```toml title="bunfig.toml"
+[test]
+preload = ["./happy-dom.ts"]
+```
+
+```ts title="happy-dom.ts"
+import { Window } from "happy-dom";
+const window = new Window();
+globalThis.document = window.document;
+globalThis.window = window as any;
+```
+
+### Step 6: Handle Missing Features
+
+Notable gaps when migrating to Bun:
+
+* `expect().toHaveReturned()`
+* Fake timers (not fully implemented as of early 2024)
+* `jsdom` (use `happy-dom` instead)
+
+---
+
+## Part 2: Bun → Jest (Reverse Migration)
+
+Teams may need to revert to Jest due to:
+
+* Missing Jest features (e.g., `toHaveReturned`, fake timers)
+* Test isolation requirements (Bun runs in single process)
+* CI/CD constraints (Bun not approved/available)
+* Team familiarity or organizational standards
+
+### Step 1: Install Jest Dependencies
+
+```bash
+npm install --save-dev jest @types/jest ts-jest
+# or
+yarn add -D jest @types/jest ts-jest
+```
+
+### Step 2: Update Imports
+
+Reverse the import direction:
+
+```ts title="test.ts"
+import { test, expect } from "bun:test";      // [!code --]
+import { test, expect } from "@jest/globals"; // [!code ++]
+
+// Or remove imports entirely if using Jest globals:
+// (Jest injects globals by default, unlike Bun)
+```
+
+### Step 3: Create Jest Configuration
+
+```js title="jest.config.js"
+module.exports = {
+  preset: 'ts-jest',
+  testEnvironment: 'node',
+  // If you were using Bun's DOM testing, switch to jsdom:
+  // testEnvironment: 'jsdom',
+  globals: {
+    'ts-jest': {
+      tsconfig: 'tsconfig.json'
+    }
+  },
+  // Match Bun's default patterns
+  testMatch: [
+    '**/*.test.{js,jsx,ts,tsx}',
+    '**/*.spec.{js,jsx,ts,tsx}',
+    '**/__tests__/**/*.{js,jsx,ts,tsx}'
+  ]
+};
+```
+
+### Step 4: Update Package Scripts
+
+```json title="package.json"
+{
+  "scripts": {
+    "test": "jest",           
+    "test:watch": "jest --watch",
+    "test:bun": "bun test"
+  }
+}
+```
+
+### Step 5: Handle API Differences
+
+| Bun Pattern                    | Jest Equivalent                               |
+| ------------------------------ | --------------------------------------------- |
+| `mock()`                       | `jest.fn()`                                   |
+| `jest.fn()` (Bun alias)        | `jest.fn()` (native)                          |
+| `expect().toMatchSnapshot()`   | `expect().toMatchSnapshot()` (same)           |
+| `--coverage` (built-in)        | `--coverage` (requires `jest --coverage`)     |
+| `--bail=3`                     | `--bail=3` (same)                             |
+| Triple-slash globals directive | Remove it; Jest injects globals automatically |
+
+### Step 6: Restore Jest-Specific Features
+
+If you were working around Bun limitations, revert those workarounds:
+
+**Fake Timers:**
+
+```ts
+// Bun: Not fully supported (as of early 2024)
+// Jest: Full support
+jest.useFakeTimers();
+jest.advanceTimersByTime(1000);
+```
+
+**Module Mocking:**
+
+```ts
+// Bun: Limited isolation (mocks persist across suites)
+// Jest: Automatic isolation between tests
+jest.mock('./module', () => ({
+  foo: jest.fn()
+}));
+```
+
+**DOM Environment:**
+
+```js title="jest.config.js"
+// If using happy-dom with Bun, switch back to jsdom:
+module.exports = {
+  testEnvironment: 'jsdom',
+  // ... other config
+};
+```
+
+---
+
+## Hybrid Strategy: Gradual Migration
+
+For large codebases, run both simultaneously:
+
+```json title="package.json"
+{
+  "scripts": {
+    "test": "bun test",
+    "test:jest": "jest",
+    "test:all": "bun test && jest"
+  }
+}
+```
+
+**File Extension Strategy:**
+
+* `*.test.ts` → Bun tests (default)
+* `*.jest.test.ts` → Jest tests (configure Jest's `testMatch` to include these)
